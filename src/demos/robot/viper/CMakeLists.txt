@@ -11,6 +11,7 @@ endif()
 set(DEMOS ${DEMOS}
   demo_ROBOT_Viper_Rigid
   demo_ROBOT_Viper_SCM
+  demo_ROBOT_ViperWheel_SCM_fixed_slip
 )
 
 if(CH_ENABLE_MODULE_SENSOR AND CH_USE_SENSOR_OPTIX)
