@@ -53,13 +53,15 @@ double density = 1760.0;
 
 // Dimension of the terrain container
 double smalldis = 1.0e-9;
-double bxDim = 5.0 + smalldis;
+// Provide enough longitudinal terrain for a 10 s run at 1 m/s peripheral speed.
+double bxDim = 12.0 + smalldis;
 double byDim = 0.8 + smalldis;
 double bzDim = 0.2 + smalldis;
 
 // Variables from DEM sim
-double safe_x = 1.0;
-double z_adv_targ = 0.2;
+// Stop before reaching the positive-x container wall.  With the wheel starting
+// at x = -5.55 m, this allows approximately 10.55 m of forward travel.
+double safe_x = 5.0;
 
 // Size of the wheel
 double wheel_radius = 0.225;
@@ -83,6 +85,9 @@ struct SimParams {
     std::string viscosity_type;
     std::string kernel_type;
     double artificial_viscosity;
+    double mu_I0;
+    double mu_fric_s;
+    double mu_fric_2;
     std::string integration_scheme;
     double total_time;
     bool use_variable_time_step;
@@ -91,6 +96,8 @@ struct SimParams {
     double total_mass;
     double slope_angle;
     double wheel_AngVel;
+    double longitudinal_speed;
+    double terrain_length;
     double gravity_G;
     double grouser_height;
     int sim_number;
@@ -113,6 +120,7 @@ void CreateSolidPhase(ChFsiSystemSPH& sysFSI,
                       ChVector3d& wheel_IniPos,
                       ChVector3d& wheel_IniVel,
                       double wheel_AngVel,
+                      double longitudinal_speed,
                       bool render_wheel,
                       double grouser_height,
                       double kernelLength,
@@ -241,6 +249,21 @@ void CreateSolidPhase(ChFsiSystemSPH& sysFSI,
     prismatic1->SetName("prismatic_chassis_ground");
     sysMBS.AddLink(prismatic1);
 
+    // Optionally prescribe the wheel-center longitudinal speed.  Together
+    // with the prescribed wheel angular speed, this produces a fixed-slip
+    // single-wheel test.  A negative value leaves longitudinal motion free.
+    if (longitudinal_speed >= 0) {
+        actuator->SetName("actuator_chassis_ground");
+        ChVector3d point_ground = chassis->GetPos() - ChVector3d(1, 0, 0);
+        ChVector3d point_chassis = chassis->GetPos();
+        ChQuaternion<> axis_x = QuatFromAngleY(CH_PI_2);
+        actuator->Initialize(ground, chassis, false, ChFrame<>(point_ground, axis_x),
+                             ChFrame<>(point_chassis, axis_x));
+        actuator->SetDistanceOffset(1.0);
+        actuator->SetActuatorFunction(chrono_types::make_shared<ChFunctionRamp>(0.0, longitudinal_speed));
+        sysMBS.AddLink(actuator);
+    }
+
     // Connect the axle to the chassis through a vertical translational joint.
     auto prismatic2 = chrono_types::make_shared<ChLinkLockPrismatic>();
     prismatic2->Initialize(chassis, axle, ChFrame<>(chassis->GetPos(), QUNIT));
@@ -269,6 +292,11 @@ bool GetProblemSpecs(int argc, char** argv, SimParams& params) {
     cli.AddOption<double>("Simulation", "time_step", "Time step", std::to_string(params.time_step));
     cli.AddOption<double>("Simulation", "artificial_viscosity", "Artificial viscosity",
                           std::to_string(params.artificial_viscosity));
+    cli.AddOption<double>("Physics", "mu_I0", "Inertial-number scale I0", std::to_string(params.mu_I0));
+    cli.AddOption<double>("Physics", "mu_fric_s", "Quasi-static friction coefficient mu_s",
+                          std::to_string(params.mu_fric_s));
+    cli.AddOption<double>("Physics", "mu_fric_2", "High-inertial-number friction coefficient mu_2",
+                          std::to_string(params.mu_fric_2));
     cli.AddOption<std::string>("Physics", "integration_scheme", "Integration scheme (euler/rk2)",
                                params.integration_scheme);
     cli.AddOption<double>("Simulation", "total_time", "Total time", std::to_string(params.total_time));
@@ -279,6 +307,11 @@ bool GetProblemSpecs(int argc, char** argv, SimParams& params) {
     cli.AddOption<double>("Physics", "total_mass", "Total mass", std::to_string(params.total_mass));
     cli.AddOption<double>("Physics", "slope_angle", "Slope angle", std::to_string(params.slope_angle));
     cli.AddOption<double>("Physics", "wheel_AngVel", "Wheel angular velocity", std::to_string(params.wheel_AngVel));
+    cli.AddOption<double>("Physics", "longitudinal_speed",
+                          "Prescribed wheel-center speed; negative leaves motion free",
+                          std::to_string(params.longitudinal_speed));
+    cli.AddOption<double>("Physics", "terrain_length", "Longitudinal CRM terrain length",
+                          std::to_string(params.terrain_length));
     cli.AddOption<double>("Physics", "gravity_G", "Gravity", std::to_string(params.gravity_G));
     cli.AddOption<double>("Physics", "grouser_height", "Grouser height", std::to_string(params.grouser_height));
     cli.AddOption<int>("Simulation", "sim_number", "Simulation number", std::to_string(params.sim_number));
@@ -305,12 +338,17 @@ bool GetProblemSpecs(int argc, char** argv, SimParams& params) {
     params.viscosity_type = cli.GetAsType<std::string>("viscosity_type");
     params.kernel_type = cli.GetAsType<std::string>("kernel_type");
     params.artificial_viscosity = cli.GetAsType<double>("artificial_viscosity");
+    params.mu_I0 = cli.GetAsType<double>("mu_I0");
+    params.mu_fric_s = cli.GetAsType<double>("mu_fric_s");
+    params.mu_fric_2 = cli.GetAsType<double>("mu_fric_2");
     params.integration_scheme = cli.GetAsType<std::string>("integration_scheme");
     params.total_time = cli.GetAsType<double>("total_time");
     params.use_variable_time_step = parse_bool(cli.GetAsType<std::string>("use_variable_time_step"));
     params.total_mass = cli.GetAsType<double>("total_mass");
     params.slope_angle = cli.GetAsType<double>("slope_angle");
     params.wheel_AngVel = cli.GetAsType<double>("wheel_AngVel");
+    params.longitudinal_speed = cli.GetAsType<double>("longitudinal_speed");
+    params.terrain_length = cli.GetAsType<double>("terrain_length");
     params.gravity_G = cli.GetAsType<double>("gravity_G");
     params.grouser_height = cli.GetAsType<double>("grouser_height");
     params.sim_number = cli.GetAsType<int>("sim_number");
@@ -342,17 +380,22 @@ int main(int argc, char* argv[]) {
     SimParams params = {/*ps_freq*/ 1,
                         /*initial_spacing*/ 0.01,
                         /*d0_multiplier*/ 1.2,
-                        /*time_step*/ 2e-4,
+                        /*time_step*/ 2.5e-4,
                         /*boundary_type*/ "adami",
                         /*viscosity_type*/ "artificial_bilateral",
                         /*kernel_type*/ "cubic",
-                        /*artificial_viscosity*/ 0.05,
+                        /*artificial_viscosity*/ 0.2,
+                        /*mu_I0*/ 0.03,
+                        /*mu_fric_s*/ 0.793,
+                        /*mu_fric_2*/ 1.0,
                         /*integration_scheme*/ "rk2",
                         /*total_time*/ 10.0,
                         /*use_variable_time_step*/ false,
                         /*total_mass*/ 100,
                         /*slope_angle*/ 0.0,
                         /*wheel_AngVel*/ 0.1,
+                        /*longitudinal_speed*/ -1.0,
+                        /*terrain_length*/ 12.0,
                         /*gravity_G*/ 9.8,
                         /*grouser_height*/ 0.01,
                         /*sim_number*/ 0,
@@ -367,6 +410,12 @@ int main(int argc, char* argv[]) {
     if (!GetProblemSpecs(argc, argv, params)) {
         return 1;
     }
+    if (params.terrain_length <= 2.0) {
+        std::cerr << "Terrain length must be greater than 2 m." << std::endl;
+        return 1;
+    }
+    bxDim = params.terrain_length + smalldis;
+    safe_x = params.terrain_length / 2.0 - 1.0;
 
     std::cout << "Problem Specs:" << std::endl;
     std::cout << "ps_freq: " << params.ps_freq << std::endl;
@@ -390,6 +439,8 @@ int main(int argc, char* argv[]) {
     std::cout << "Total Mass: " << params.total_mass << std::endl;
     std::cout << "Slope Angle: " << params.slope_angle << std::endl;
     std::cout << "Wheel Angular Velocity: " << params.wheel_AngVel << std::endl;
+    std::cout << "Longitudinal Speed: " << params.longitudinal_speed << std::endl;
+    std::cout << "Terrain Length: " << params.terrain_length << std::endl;
     std::cout << "Gravity Magnitude: " << params.gravity_G << std::endl;
     std::cout << "Grouser Height: " << params.grouser_height << std::endl;
     params.slope_angle = params.slope_angle / 180.0 * CH_PI;
@@ -471,9 +522,9 @@ int main(int argc, char* argv[]) {
     mat_props.density = density;
     mat_props.Young_modulus = 1e6;
     mat_props.Poisson_ratio = 0.3;
-    mat_props.mu_I0 = 0.04;
-    mat_props.mu_fric_s = 0.793;
-    mat_props.mu_fric_2 = 0.793;
+    mat_props.mu_I0 = params.mu_I0;
+    mat_props.mu_fric_s = params.mu_fric_s;
+    mat_props.mu_fric_2 = params.mu_fric_2;
     mat_props.average_diam = 0.005;
     mat_props.cohesion_coeff = 0;
 
@@ -542,8 +593,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Create Solid region and attach BCE SPH particles
-    CreateSolidPhase(sysFSI, wheel_IniPos, wheel_IniVel, params.wheel_AngVel, params.render, params.grouser_height,
-                     kernelLength, params.total_mass, params.initial_spacing);
+    CreateSolidPhase(sysFSI, wheel_IniPos, wheel_IniVel, params.wheel_AngVel, params.longitudinal_speed, params.render,
+                     params.grouser_height, kernelLength, params.total_mass, params.initial_spacing);
 
     sysSPH.SetActiveDomain(ChVector3d(0.6, 0.6, 0.8));
     sysSPH.SetActiveDomainDelay(1.0);
@@ -557,6 +608,8 @@ int main(int argc, char* argv[]) {
     ChVector3d w_pos = wheel->GetPos();
     ChVector3d w_vel = wheel->GetPosDt();
     ChVector3d angvel = wheel->GetAngVelLocal();
+    ChVector3d contact_force = sysFSI.GetFsiBodyForce(0);
+    ChVector3d contact_torque = sysFSI.GetFsiBodyTorque(0);
 
     // Save wheel mesh
     ChTriangleMeshConnected wheel_mesh;
@@ -591,7 +644,14 @@ int main(int argc, char* argv[]) {
            << "fz\t"
            << "tx\t"
            << "ty\t"
-           << "tz\n";
+           << "tz\t"
+           << "contact_fx\t"
+           << "contact_fy\t"
+           << "contact_fz\t"
+           << "contact_tx\t"
+           << "contact_ty\t"
+           << "contact_tz\t"
+           << "drawbar_pull\n";
 
     myDBP_Torque << "time\t"
                  << "fx\t"
@@ -628,9 +688,7 @@ int main(int argc, char* argv[]) {
     int print_frame = 0;
     // Some things that even DEM domes
     double x1 = wheel->GetPos().x();
-    double z1 = x1 * std::sin(params.slope_angle);
     double x2 = x1;
-    double z_adv = 0;
     int counter = 0;
 
     ChTimer timer;
@@ -656,16 +714,14 @@ int main(int argc, char* argv[]) {
             print_frame++;
         }
 
-        if (z_adv >= z_adv_targ) {
-            break;
-        }
-
         if (params.output && time >= output_frame / params.out_fps) {
             std::cout << "-------- Output" << std::endl;
             myFile << time << "\t" << w_pos.x() << "\t" << w_pos.y() << "\t" << w_pos.z() << "\t" << w_vel.x() << "\t"
                    << w_vel.y() << "\t" << w_vel.z() << "\t" << angvel.x() << "\t" << angvel.y() << "\t" << angvel.z()
                    << "\t" << force.x() << "\t" << force.y() << "\t" << force.z() << "\t" << torque.x() << "\t"
-                   << torque.y() << "\t" << torque.z() << "\n";
+                   << torque.y() << "\t" << torque.z() << "\t" << contact_force.x() << "\t" << contact_force.y()
+                   << "\t" << contact_force.z() << "\t" << contact_torque.x() << "\t" << contact_torque.y() << "\t"
+                   << contact_torque.z() << "\t" << force.x() << "\n";
             myDBP_Torque << time << "\t" << force.x() << "\t" << torque.z() << "\n";
             if (params.write_marker_files) {
                 sysSPH.SaveParticleData(out_dir + "/particles");
@@ -702,9 +758,10 @@ int main(int argc, char* argv[]) {
         w_pos = wheel->GetPos();
         w_vel = wheel->GetPosDt();
         angvel = wheel->GetAngVelLocal();
+        contact_force = sysFSI.GetFsiBodyForce(0);
+        contact_torque = sysFSI.GetFsiBodyTorque(0);
 
         x2 = w_pos.x();
-        z_adv = x2 * std::sin(params.slope_angle) - z1;
         if (x2 > safe_x) {
             break;
         }
