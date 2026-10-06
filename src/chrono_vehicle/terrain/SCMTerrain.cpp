@@ -293,6 +293,11 @@ bool SCMTerrain::GetContactForceBody(std::shared_ptr<ChBody> body, ChVector3d& f
     return true;
 }
 
+const SCMTerrain::BodyContactForces* SCMTerrain::GetContactForcesBody(std::shared_ptr<ChBody> body) const {
+    auto itr = m_loader->m_body_contact_forces.find(body.get());
+    return itr == m_loader->m_body_contact_forces.end() ? nullptr : &itr->second;
+}
+
 bool SCMTerrain::GetContactForceNode(std::shared_ptr<fea::ChNodeFEAxyz> node, ChVector3d& force) const {
     auto itr = m_loader->m_node_forces.find(node);
     if (itr == m_loader->m_node_forces.end()) {
@@ -1132,6 +1137,7 @@ void SCMLoader::ComputeInternalForces() {
     // Reset the load list and map of contact forces
     this->GetLoadList().clear();
     m_body_forces.clear();
+    m_body_contact_forces.clear();
     m_node_forces.clear();
 
     // ---------------------
@@ -1493,6 +1499,14 @@ void SCMLoader::ComputeInternalForces() {
             // The resultant force is assumed to be applied at the body COM.
             ChVector3d force = Fn + Ft;
             ChVector3d moment = Vcross(point_abs - body->GetPos(), force);
+
+            // Record exactly the forces and application points used below, before reducing to the COM.
+            auto& snapshot = m_body_contact_forces[body];
+            if (snapshot.contacts.empty()) {
+                snapshot.time = GetSystem()->GetChTime();
+                snapshot.reference_point = body->GetPos();
+            }
+            snapshot.contacts.push_back({point_abs, force});
 
             auto itr = m_body_forces.find(body);
             if (itr == m_body_forces.end()) {

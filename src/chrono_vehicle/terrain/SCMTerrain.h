@@ -309,6 +309,30 @@ class CH_VEHICLE_API SCMTerrain : public ChTerrain {
     /// If contact forces are applied to the body, they are reduced to the body center of mass.
     bool GetContactForceBody(std::shared_ptr<ChBody> body, ChVector3d& force, ChVector3d& torque) const;
 
+    /// One SCM grid-node force acting on a rigid body. Both vectors are in world coordinates.
+    struct ContactForce {
+        ChVector3d point;  ///< actual application point used in the resultant moment [m]
+        ChVector3d force;  ///< force exerted by the soil ON the body: Fn + Ft [N], including support and damping
+    };
+
+    /// Snapshot of the latest SCM force evaluation for a rigid body.
+    struct BodyContactForces {
+        double time = 0;             ///< system time at force evaluation [s]
+        ChVector3d reference_point;  ///< body COM at force evaluation, in world coordinates [m]
+        std::vector<ContactForce> contacts;
+    };
+
+    /// Return the individual forces underlying GetContactForceBody, or nullptr if none were applied.
+    /// The snapshot is replaced at every SCM force evaluation (Setup at the beginning of a timestep),
+    /// not by Update. After DoStepDynamics it still describes the beginning of that step, just like
+    /// GetContactForceBody. No previous contacts are retained. Before the first evaluation returns nullptr.
+    /// The returned pointer and its contents remain valid only until the next SCM force evaluation or destruction.
+    /// Sum force for the existing resultant; sum cross(point - reference_point, force) for its world-frame
+    /// moment about the evaluation-time COM. Do not use the body's end-of-step COM for this reconstruction.
+    /// Entries are the complete applied Fn + Ft, with no normal, support, or damping terms removed.
+    /// No ordering of contacts is guaranteed. Available also in co-simulation mode, where loads are not applied.
+    const BodyContactForces* GetContactForcesBody(std::shared_ptr<ChBody> body) const;
+
     /// Return the cumulative contact force on the specified mesh node (due to interaction with the SCM terrain).
     /// The return value is true if the specified node experiences contact forces and false otherwise.
     bool GetContactForceNode(std::shared_ptr<fea::ChNodeFEAxyz> node, ChVector3d& force) const;
@@ -611,6 +635,7 @@ class CH_VEHICLE_API SCMLoader : public ChLoadContainer {
 
     // Contact forces on contactable objects interacting with the SCM terrain
     std::unordered_map<ChBody*, std::pair<ChVector3d, ChVector3d>> m_body_forces;
+    std::unordered_map<ChBody*, SCMTerrain::BodyContactForces> m_body_contact_forces;
     std::unordered_map<std::shared_ptr<fea::ChNodeFEAxyz>, ChVector3d> m_node_forces;
 
     // Bulldozing effects
